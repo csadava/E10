@@ -1,5 +1,6 @@
 import os
 import json
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -11,6 +12,7 @@ from telegram.ext import (
 )
 
 TOKEN = "8991397075:AAEXNRuY3RIY2JTNNy0bEJV91zVEzgKcH9w"
+PORT = int(os.environ.get("PORT", 8080))
 
 # مسیر فایل دیتابیس روی ولوم رایلی (/data)
 DB_DIR = "/data"
@@ -174,7 +176,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_ghost":
         await query.message.edit_text("👻 حالت روح و مخفی.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="back_main")]]), parse_mode="Markdown")
 
-# خوشامدگویی
+# خوشامدگویی و استارت در پی‌وی
 async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in update.message.new_chat_members:
         if member.id == context.bot.id:
@@ -185,7 +187,7 @@ async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text = settings["text"].format(name=member.full_name, id=member.id)
             await update.message.reply_text(text, parse_mode="Markdown")
 
-# مدیریت دستورات متنی فارسی (مثل راهنما) و فیلترها
+# مدیریت پیام‌های متنی (استارت، راهنما، قفل‌ها و فیلترها)
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     if not message or not message.from_user:
@@ -193,8 +195,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     text = message.text or message.caption or ""
     
-    # اگر کاربر کلمه راهنما یا help را فرستاد
-    if text.strip() in ["راهنما", "help", "/راهنما"]:
+    # دستور استارت یا راهنما
+    if text.strip() in ["/start", "استارت", "راهنما", "help", "/راهنما"]:
         await show_help(update, context)
         return
 
@@ -273,25 +275,42 @@ async def ghost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.delete()
     await update.message.reply_text(f"👻 {text}")
 
-# راه‌اندازی ربات
+# تنظیمات Flask برای اجرای روی پورت رایلی با Webhook
+app_flask = Flask(__name__)
+telegram_app = None
+
+@app_flask.route("/", methods=["GET"])
+def index():
+    return "E10 Manager Bot is active and running via Webhook!", 200
+
+@app_flask.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    telegram_app.update_queue.put_nowait(update)
+    return "ok", 200
+
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    global telegram_app
+    telegram_app = ApplicationBuilder().token(TOKEN).build()
 
-    # استفاده از کامندهای مجاز انگلیسی
-    app.add_handler(CommandHandler("help", show_help))
-    app.add_handler(CommandHandler("font", font_cmd))
-    app.add_handler(CommandHandler("panel", user_panel_cmd))
-    app.add_handler(CommandHandler("stats", stats_cmd))
-    app.add_handler(CommandHandler("tag", tag_cmd))
-    app.add_handler(CommandHandler("ghost", ghost_cmd))
+    telegram_app.add_handler(CommandHandler("help", show_help))
+    telegram_app.add_handler(CommandHandler("font", font_cmd))
+    telegram_app.add_handler(CommandHandler("panel", user_panel_cmd))
+    telegram_app.add_handler(CommandHandler("stats", stats_cmd))
+    telegram_app.add_handler(CommandHandler("tag", tag_cmd))
+    telegram_app.add_handler(CommandHandler("ghost", ghost_cmd))
 
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
-    # هندلر پیام‌های متنی برای پشتیبانی کامل از کلمه «راهنما» و فیلترها
-    app.add_handler(MessageHandler(filters.TEXT, text_message_handler))
+    telegram_app.add_handler(CallbackQueryHandler(button_handler))
+    telegram_app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
+    telegram_app.add_handler(MessageHandler(filters.TEXT, text_message_handler))
 
-    print("E10 Manager Bot with Persistent Storage is running...")
-    app.run_polling()
+    # مقداردهی اولیه و راه‌اندازی ربات در پس‌زمینه برای وب‌هوک
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(telegram_app.initialize())
+
+    print(f"Starting Flask server on port {PORT}...")
+    app_flask.run(host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
     main()
