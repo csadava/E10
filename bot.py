@@ -1,6 +1,5 @@
 import os
 import json
-from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -13,6 +12,8 @@ from telegram.ext import (
 
 TOKEN = "8991397075:AAEXNRuY3RIY2JTNNy0bEJV91zVEzgKcH9w"
 PORT = int(os.environ.get("PORT", 8080))
+# دامنه شما در رایلی
+WEBHOOK_URL = "https://e10-production.up.railway.app/" + TOKEN
 
 # مسیر فایل دیتابیس روی ولوم رایلی (/data)
 DB_DIR = "/data"
@@ -20,7 +21,6 @@ if not os.path.exists(DB_DIR):
     os.makedirs(DB_DIR, exist_ok=True)
 DB_FILE = os.path.join(DB_DIR, "e10_database.json")
 
-# ساختار پیش‌فرض دیتابیس
 DEFAULT_DB = {
     "warnings": {},      
     "mutes": {},         
@@ -72,7 +72,6 @@ async def is_admin_or_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
     return False
 
-# تابع نمایش منوی راهنما
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if chat and chat.type != "private" and not await is_admin_or_owner(update, context):
@@ -94,7 +93,6 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query:
         await update.callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
-# مدیریت کلیک روی دکمه‌های شیشه‌ای
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -176,7 +174,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_ghost":
         await query.message.edit_text("👻 حالت روح و مخفی.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="back_main")]]), parse_mode="Markdown")
 
-# خوشامدگویی و استارت در پی‌وی
 async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in update.message.new_chat_members:
         if member.id == context.bot.id:
@@ -187,7 +184,6 @@ async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text = settings["text"].format(name=member.full_name, id=member.id)
             await update.message.reply_text(text, parse_mode="Markdown")
 
-# مدیریت پیام‌های متنی (استارت، راهنما، قفل‌ها و فیلترها)
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     if not message or not message.from_user:
@@ -195,7 +191,6 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     text = message.text or message.caption or ""
     
-    # دستور استارت یا راهنما
     if text.strip() in ["/start", "استارت", "راهنما", "help", "/راهنما"]:
         await show_help(update, context)
         return
@@ -206,19 +201,16 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     chat_id = str(message.chat.id)
     user_id = str(message.from_user.id)
 
-    # ذخیره آمار پیام‌ها
     chat_counts = db["msg_counts"].setdefault(chat_id, {})
     chat_counts[user_id] = chat_counts.get(user_id, 0) + 1
     save_db()
 
-    # بررسی فیلتر کلمات
     filtered_words = db["filters"].get(chat_id, [])
     for word in filtered_words:
         if word in text:
             await message.delete()
             return
 
-    # بررسی قفل‌ها
     locks = db["locks"].get(chat_id, {})
     if locks.get("hashtag") and "#" in text:
         await message.delete()
@@ -230,7 +222,6 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await message.delete()
         return
 
-# دستورات ابزار و سرگرمی
 async def font_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("لطفا متنی وارد کنید. مثال:\n`/فونت سلام`", parse_mode="Markdown")
@@ -267,7 +258,7 @@ async def tag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("⚔️ تگ همگانی اعضای کلن E10 انجام شد!")
 
-async def ghost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ghost_cmd(update: Update, context: ContextTypes.DEFAULT_Type if 'ContextTypes' in globals() else object):
     if not update.message.reply_to_message or not context.args:
         await update.message.reply_text("استفاده: روی پیام ریپلی کنید و بنویسید `/روح [متن]`")
         return
@@ -275,42 +266,28 @@ async def ghost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.delete()
     await update.message.reply_text(f"👻 {text}")
 
-# تنظیمات Flask برای اجرای روی پورت رایلی با Webhook
-app_flask = Flask(__name__)
-telegram_app = None
-
-@app_flask.route("/", methods=["GET"])
-def index():
-    return "E10 Manager Bot is active and running via Webhook!", 200
-
-@app_flask.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    telegram_app.update_queue.put_nowait(update)
-    return "ok", 200
-
 def main():
-    global telegram_app
-    telegram_app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    telegram_app.add_handler(CommandHandler("help", show_help))
-    telegram_app.add_handler(CommandHandler("font", font_cmd))
-    telegram_app.add_handler(CommandHandler("panel", user_panel_cmd))
-    telegram_app.add_handler(CommandHandler("stats", stats_cmd))
-    telegram_app.add_handler(CommandHandler("tag", tag_cmd))
-    telegram_app.add_handler(CommandHandler("ghost", ghost_cmd))
+    app.add_handler(CommandHandler("help", show_help))
+    app.add_handler(CommandHandler("font", font_cmd))
+    app.add_handler(CommandHandler("panel", user_panel_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("tag", tag_cmd))
+    app.add_handler(CommandHandler("ghost", ghost_cmd))
 
-    telegram_app.add_handler(CallbackQueryHandler(button_handler))
-    telegram_app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
-    telegram_app.add_handler(MessageHandler(filters.TEXT, text_message_handler))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
+    app.add_handler(MessageHandler(filters.TEXT, text_message_handler))
 
-    # مقداردهی اولیه و راه‌اندازی ربات در پس‌زمینه برای وب‌هوک
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(telegram_app.initialize())
-
-    print(f"Starting Flask server on port {PORT}...")
-    app_flask.run(host="0.0.0.0", port=PORT)
+    print(f"Starting Webhook on port {PORT}...")
+    
+    # استفاده از متد داخلی وب‌هوک کتابخانه (بدون نیاز به فایل فلاسك جداگانه)
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=WEBHOOK_URL
+    )
 
 if __name__ == "__main__":
     main()
