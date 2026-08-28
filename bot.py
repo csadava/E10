@@ -12,8 +12,11 @@ from telegram.ext import (
 
 TOKEN = "8991397075:AAEXNRuY3RIY2JTNNy0bEJV91zVEzgKcH9w"
 
-# مسیر فایل دیتابیس (اگر روی رایلی از ولوم استفاده می‌کنید، فایل را در مسیر دلخواه ذخیره کنید)
-DB_FILE = "e10_database.json"
+# مسیر فایل دیتابیس روی ولوم رایلی (/data)
+DB_DIR = "/data"
+if not os.path.exists(DB_DIR):
+    os.makedirs(DB_DIR, exist_ok=True)
+DB_FILE = os.path.join(DB_DIR, "e10_database.json")
 
 # ساختار پیش‌فرض دیتابیس
 DEFAULT_DB = {
@@ -38,7 +41,6 @@ DEFAULT_DB = {
     "forced_add": {}     
 }
 
-# توابع بارگذاری و ذخیره دیتابیس
 def load_db():
     if os.path.exists(DB_FILE):
         try:
@@ -54,7 +56,6 @@ def save_db():
 
 db = load_db()
 
-# بررسی دسترسی مدیر یا مالک
 async def is_admin_or_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user = update.effective_user
     chat = update.effective_chat
@@ -69,9 +70,10 @@ async def is_admin_or_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
     return False
 
-# دستور راهنما و منوی اصلی دکمه‌ها
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private" and not await is_admin_or_owner(update, context):
+# تابع نمایش منوی راهنما
+async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat and chat.type != "private" and not await is_admin_or_owner(update, context):
         return
 
     keyboard = [
@@ -97,12 +99,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "back_main":
-        await help_command(update, context)
+        await show_help(update, context)
         return
 
     chat_id = str(query.message.chat_id)
 
-    # منوی مجازات
     if data == "menu_punish":
         kb = [
             [InlineKeyboardButton("بن / حذف بن / لیست", callback_data="sub_ban")],
@@ -122,7 +123,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "sub_tmute":
         await query.message.edit_text("دستور سکوت موقت:\n• `/سکوت [دقیقه]` (با ریپلی، مثلاً `/سکوت 5`)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="menu_punish")]]), parse_mode="Markdown")
 
-    # منوی سرگرمی
     elif data == "menu_fun":
         kb = [
             [InlineKeyboardButton("فونت", callback_data="sub_font"), InlineKeyboardButton("پین", callback_data="sub_pin")],
@@ -140,7 +140,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "sub_tag":
         await query.message.edit_text("دستور: `/تگ`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="menu_fun")]]), parse_mode="Markdown")
 
-    # منوی قفل‌ها
     elif data == "menu_locks":
         kb = [
             [InlineKeyboardButton("هشتگ", callback_data="lock_hashtag"), InlineKeyboardButton("لینک", callback_data="lock_link")],
@@ -154,9 +153,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current = db["locks"].setdefault(chat_id, {}).get(lock_type, False)
         db["locks"][chat_id][lock_type] = not current
         save_db()
-        await query.answer(f"وضعیت قفل تغییر کرد.")
+        await query.answer("وضعیت قفل تغییر کرد.")
 
-    # سایر منوها
     elif data == "menu_ranks":
         await query.message.edit_text("👑 ارتقا و عزل مدیران و مالکین.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="back_main")]]), parse_mode="Markdown")
     elif data == "menu_welcome":
@@ -187,15 +185,24 @@ async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text = settings["text"].format(name=member.full_name, id=member.id)
             await update.message.reply_text(text, parse_mode="Markdown")
 
-# فیلترها و قفل‌ها
-async def message_filter_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# مدیریت دستورات متنی فارسی (مثل راهنما) و فیلترها
+async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
-    if not message or not message.from_user or message.chat.type == "private":
+    if not message or not message.from_user:
+        return
+
+    text = message.text or message.caption or ""
+    
+    # اگر کاربر کلمه راهنما یا help را فرستاد
+    if text.strip() in ["راهنما", "help", "/راهنما"]:
+        await show_help(update, context)
+        return
+
+    if message.chat.type == "private":
         return
 
     chat_id = str(message.chat.id)
     user_id = str(message.from_user.id)
-    text = message.text or message.caption or ""
 
     # ذخیره آمار پیام‌ها
     chat_counts = db["msg_counts"].setdefault(chat_id, {})
@@ -270,17 +277,18 @@ async def ghost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("راهنما", help_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("فونت", font_cmd))
-    app.add_handler(CommandHandler("پنل_کاربر", user_panel_cmd))
-    app.add_handler(CommandHandler("آمار_امروز", stats_cmd))
-    app.add_handler(CommandHandler("تگ", tag_cmd))
-    app.add_handler(CommandHandler("روح", ghost_cmd))
+    # استفاده از کامندهای مجاز انگلیسی
+    app.add_handler(CommandHandler("help", show_help))
+    app.add_handler(CommandHandler("font", font_cmd))
+    app.add_handler(CommandHandler("panel", user_panel_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("tag", tag_cmd))
+    app.add_handler(CommandHandler("ghost", ghost_cmd))
 
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_filter_handler))
+    # هندلر پیام‌های متنی برای پشتیبانی کامل از کلمه «راهنما» و فیلترها
+    app.add_handler(MessageHandler(filters.TEXT, text_message_handler))
 
     print("E10 Manager Bot with Persistent Storage is running...")
     app.run_polling()
